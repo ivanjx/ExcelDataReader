@@ -38,13 +38,16 @@ internal static class StreamExtensions
         int totalRead = 0;
         while (totalRead < minimumBytes)
         {
-            var memory = new Memory<byte>(buffer, offset + totalRead, minimumBytes - totalRead);
-            int read = await stream.ReadAsync(memory, cancellationToken).ConfigureAwait(false);
+#if NETSTANDARD2_1_OR_GREATER || NET8_0_OR_GREATER
+            int read = await stream.ReadAsync(new Memory<byte>(buffer, offset + totalRead, minimumBytes - totalRead), cancellationToken).ConfigureAwait(false);
+#else
+            int read = await stream.ReadAsync(buffer, offset + totalRead, minimumBytes - totalRead, cancellationToken).ConfigureAwait(false);
+#endif
             if (read == 0)
                 return totalRead;
             totalRead += read;
         }
-        
+
         return totalRead;
     }
 }

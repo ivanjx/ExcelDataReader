@@ -96,18 +96,4 @@ public interface IExcelDataReader : IDataReader
     /// <param name="i">The index of the column to find.</param>
     /// <returns>The cell error, or null if no error.</returns>
     CellError? GetCellError(int i);
-
-    /// <summary>
-    /// Asynchronously advances the reader to the next record.
-    /// </summary>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task that represents the asynchronous operation. The value of the TResult parameter contains true if there are more rows; otherwise, false.</returns>
-    Task<bool> ReadAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Asynchronously advances the reader to the next result, when reading the results of a batch of statements.
-    /// </summary>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>A task that represents the asynchronous operation. The value of the TResult parameter contains true if there are more result sets; otherwise, false.</returns>
-    Task<bool> NextResultAsync(CancellationToken cancellationToken = default);
 }

@@ -23,9 +23,9 @@ internal sealed partial class ZipWorker : IDisposable
     private readonly Dictionary<string, ZipArchiveEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _worksheetRels = [];
 
-    private readonly string _fileWorkbook;
-    private readonly string? _fileSharedStrings;
-    private readonly string? _fileStyles;
+    private string? _fileWorkbook;
+    private string? _fileSharedStrings;
+    private string? _fileStyles;
 
     private ZipArchive? _zipFile;
 
@@ -87,64 +87,9 @@ internal sealed partial class ZipWorker : IDisposable
                     break;
             }
         }
-
-        static string ResolvePath(string? basePath, string path)
-        {
-            // Can there be relative paths?
-#if NETSTANDARD2_1_OR_GREATER || NET8_0_OR_GREATER
-            if (path.StartsWith('/'))
-#else
-            if (path.StartsWith("/", StringComparison.Ordinal))
-#endif
-                return path[1..];
-            return basePath + path;
-        }
-
-        string? CheckPath(string path)
-        {
-            if (_entries.ContainsKey(path))
-                return path;
-            return null;
-        }
-
-        string? ReadRootRels()
-        {
-            var entry = FindEntry("_rels/.rels");
-            if (entry == null)
-                return null;
-
-            using var reader = XmlReader.Create(entry.Open(), XmlSettings);
-            while (reader.Read())
-            {
-                if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
-                    continue;
-
-                var type = reader.GetAttribute("Type");
-                var target = reader.GetAttribute("Target");
-
-                switch (type)
-                {
-                    case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument":
-                    case "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument":
-                        return target;
-                }
-            }
-
-            return null;
-        }
     }
 
 #if NET8_0_OR_GREATER
-    public static async Task<ZipWorker> CreateAsync(Stream fileStream, CancellationToken cancellationToken = default)
-    {
-        // Open the ZipArchive asynchronously
-        var zipFile = await System.IO.Compression.ZipFile.OpenAsync(fileStream, System.IO.Compression.ZipArchiveMode.Read, cancellationToken).ConfigureAwait(false);
-        var worker = new ZipWorker(zipFile);
-        await worker.InitializeAsync(cancellationToken).ConfigureAwait(false);
-        return worker;
-    }
-
-    // New constructor for ZipArchive
     public ZipWorker(ZipArchive zipFile)
     {
         _zipFile = zipFile;
@@ -152,71 +97,15 @@ internal sealed partial class ZipWorker : IDisposable
         {
             _entries.Add(entry.FullName.Replace('\\', '/'), entry);
         }
-        // Synchronous initialization for now; async logic in InitializeAsync
     }
 
-    private async Task InitializeAsync(CancellationToken cancellationToken)
+    public static async Task<ZipWorker> CreateAsync(Stream fileStream, CancellationToken cancellationToken = default)
     {
-        var fileWorkbook = await ReadRootRelsAsync(cancellationToken).ConfigureAwait(false);
-        if (fileWorkbook == null || !_entries.ContainsKey(fileWorkbook))
-        {
-            fileWorkbook = CheckPath(DefaultFileWorkbook + Format) ?? CheckPath(DefaultFileWorkbook + BinFormat);
-        }
-        _fileWorkbook = fileWorkbook ?? throw new Exceptions.HeaderException(Errors.ErrorZipNoOpenXml);
-        string[] parts = _fileWorkbook.Split('/');
-        string? basePath = parts.Length <= 1 ? null : string.Join("/", parts, 0, parts.Length - 1) + "/";
-        string path = basePath + "_rels/" + parts[^1] + ".rels";
-        var workbookRelsEntry = FindEntry(path);
-        if (workbookRelsEntry == null)
-            return;
-        using var reader = XmlReader.Create(workbookRelsEntry.Open(), XmlSettings, null, true);
-        while (await reader.ReadAsync().ConfigureAwait(false))
-        {
-            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
-                continue;
-            var id = reader.GetAttribute("Id");
-            var type = reader.GetAttribute("Type");
-            var target = reader.GetAttribute("Target");
-            if (id == null || target == null)
-                continue;
-            switch (type)
-            {
-                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet":
-                case "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet":
-                    _worksheetRels[id] = ResolvePath(basePath, target);
-                    break;
-                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles":
-                case "http://purl.oclc.org/ooxml/officeDocument/relationships/styles":
-                    _fileStyles = ResolvePath(basePath, target);
-                    break;
-                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings":
-                case "http://purl.oclc.org/ooxml/officeDocument/relationships/sharedStrings":
-                    _fileSharedStrings = ResolvePath(basePath, target);
-                    break;
-            }
-        }
-    }
-
-    private async Task<string?> ReadRootRelsAsync(CancellationToken cancellationToken)
-    {
-        var entry = FindEntry("_rels/.rels");
-        if (entry == null)
-            return null;
-        using var reader = XmlReader.Create(entry.Open(), XmlSettings, null, true);
-        while (await reader.ReadAsync().ConfigureAwait(false))
-        {
-            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
-                continue;
-            var type = reader.GetAttribute("Type");
-            var target = reader.GetAttribute("Target");
-            switch (type)
-            {
-                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument":
-                case "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument":
-                    return target;
-            }
-        }
-        return null;
+        // Open the ZipArchive (no async open for streams)
+        var zipFile = new ZipArchive(fileStream ?? throw new ArgumentNullException(nameof(fileStream)), ZipArchiveMode.Read, leaveOpen: false);
+        var worker = new ZipWorker(zipFile);
+        await worker.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        return worker;
     }
 #endif
 
@@ -297,6 +186,120 @@ internal sealed partial class ZipWorker : IDisposable
     private static BufferedStream OpenZipEntry(ZipArchiveEntry zipEntry) => new(zipEntry.Open());
 #else
     private static Stream OpenZipEntry(ZipArchiveEntry zipEntry) => zipEntry.Open();
+#endif
+
+    private static string ResolvePath(string? basePath, string path)
+    {
+        // Can there be relative paths?
+#if NETSTANDARD2_1_OR_GREATER || NET8_0_OR_GREATER
+        if (path.StartsWith('/'))
+#else
+        if (path.StartsWith("/", StringComparison.Ordinal))
+#endif
+            return path[1..];
+
+        return basePath + path;
+    }
+
+    private string? CheckPath(string path)
+    {
+        if (_entries.ContainsKey(path))
+            return path;
+        return null;
+    }
+
+    private string? ReadRootRels()
+    {
+        var entry = FindEntry("_rels/.rels");
+        if (entry == null)
+            return null;
+
+        using var reader = XmlReader.Create(entry.Open(), XmlSettings);
+        while (reader.Read())
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
+                continue;
+
+            var type = reader.GetAttribute("Type");
+            var target = reader.GetAttribute("Target");
+
+            switch (type)
+            {
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument":
+                    return target;
+            }
+        }
+
+        return null;
+    }
+
+#if NET8_0_OR_GREATER
+    private async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        var fileWorkbook = await ReadRootRelsAsync(cancellationToken).ConfigureAwait(false);
+        if (fileWorkbook == null || !_entries.ContainsKey(fileWorkbook))
+        {
+            fileWorkbook = CheckPath(DefaultFileWorkbook + Format) ?? CheckPath(DefaultFileWorkbook + BinFormat);
+        }
+
+        _fileWorkbook = fileWorkbook ?? throw new Exceptions.HeaderException(Errors.ErrorZipNoOpenXml);
+        string[] parts = _fileWorkbook.Split('/');
+        string? basePath = parts.Length <= 1 ? null : string.Join("/", parts, 0, parts.Length - 1) + "/";
+        string path = basePath + "_rels/" + parts[^1] + ".rels";
+        var workbookRelsEntry = FindEntry(path);
+        if (workbookRelsEntry == null)
+            return;
+        using var reader = XmlReader.Create(workbookRelsEntry.Open(), XmlSettings);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
+                continue;
+            var id = reader.GetAttribute("Id");
+            var type = reader.GetAttribute("Type");
+            var target = reader.GetAttribute("Target");
+            if (id == null || target == null)
+                continue;
+            switch (type)
+            {
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet":
+                    _worksheetRels[id] = ResolvePath(basePath, target);
+                    break;
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/styles":
+                    _fileStyles = ResolvePath(basePath, target);
+                    break;
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/sharedStrings":
+                    _fileSharedStrings = ResolvePath(basePath, target);
+                    break;
+            }
+        }
+    }
+
+    private async Task<string?> ReadRootRelsAsync(CancellationToken cancellationToken)
+    {
+        var entry = FindEntry("_rels/.rels");
+        if (entry == null)
+            return null;
+        using var reader = XmlReader.Create(entry.Open(), XmlSettings);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
+                continue;
+            var type = reader.GetAttribute("Type");
+            var target = reader.GetAttribute("Target");
+            switch (type)
+            {
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument":
+                    return target;
+            }
+        }
+
+        return null;
+    }
 #endif
 
     private ZipArchiveEntry? FindEntry(string? name)
