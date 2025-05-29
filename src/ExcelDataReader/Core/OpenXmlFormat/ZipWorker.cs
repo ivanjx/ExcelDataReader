@@ -134,6 +134,92 @@ internal sealed partial class ZipWorker : IDisposable
         }
     }
 
+#if NET8_0_OR_GREATER
+    public static async Task<ZipWorker> CreateAsync(Stream fileStream, CancellationToken cancellationToken = default)
+    {
+        // Open the ZipArchive asynchronously
+        var zipFile = await System.IO.Compression.ZipFile.OpenAsync(fileStream, System.IO.Compression.ZipArchiveMode.Read, cancellationToken).ConfigureAwait(false);
+        var worker = new ZipWorker(zipFile);
+        await worker.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        return worker;
+    }
+
+    // New constructor for ZipArchive
+    public ZipWorker(ZipArchive zipFile)
+    {
+        _zipFile = zipFile;
+        foreach (var entry in _zipFile.Entries)
+        {
+            _entries.Add(entry.FullName.Replace('\\', '/'), entry);
+        }
+        // Synchronous initialization for now; async logic in InitializeAsync
+    }
+
+    private async Task InitializeAsync(CancellationToken cancellationToken)
+    {
+        var fileWorkbook = await ReadRootRelsAsync(cancellationToken).ConfigureAwait(false);
+        if (fileWorkbook == null || !_entries.ContainsKey(fileWorkbook))
+        {
+            fileWorkbook = CheckPath(DefaultFileWorkbook + Format) ?? CheckPath(DefaultFileWorkbook + BinFormat);
+        }
+        _fileWorkbook = fileWorkbook ?? throw new Exceptions.HeaderException(Errors.ErrorZipNoOpenXml);
+        string[] parts = _fileWorkbook.Split('/');
+        string? basePath = parts.Length <= 1 ? null : string.Join("/", parts, 0, parts.Length - 1) + "/";
+        string path = basePath + "_rels/" + parts[^1] + ".rels";
+        var workbookRelsEntry = FindEntry(path);
+        if (workbookRelsEntry == null)
+            return;
+        using var reader = XmlReader.Create(workbookRelsEntry.Open(), XmlSettings, null, true);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
+                continue;
+            var id = reader.GetAttribute("Id");
+            var type = reader.GetAttribute("Type");
+            var target = reader.GetAttribute("Target");
+            if (id == null || target == null)
+                continue;
+            switch (type)
+            {
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/worksheet":
+                    _worksheetRels[id] = ResolvePath(basePath, target);
+                    break;
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/styles":
+                    _fileStyles = ResolvePath(basePath, target);
+                    break;
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/sharedStrings":
+                    _fileSharedStrings = ResolvePath(basePath, target);
+                    break;
+            }
+        }
+    }
+
+    private async Task<string?> ReadRootRelsAsync(CancellationToken cancellationToken)
+    {
+        var entry = FindEntry("_rels/.rels");
+        if (entry == null)
+            return null;
+        using var reader = XmlReader.Create(entry.Open(), XmlSettings, null, true);
+        while (await reader.ReadAsync().ConfigureAwait(false))
+        {
+            if (reader.NodeType != XmlNodeType.Element || reader.LocalName != "Relationship")
+                continue;
+            var type = reader.GetAttribute("Type");
+            var target = reader.GetAttribute("Target");
+            switch (type)
+            {
+                case "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument":
+                case "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument":
+                    return target;
+            }
+        }
+        return null;
+    }
+#endif
+
     /// <summary>
     /// Gets the shared strings reader.
     /// </summary>

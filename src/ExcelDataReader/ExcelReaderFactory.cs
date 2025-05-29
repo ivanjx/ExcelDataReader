@@ -67,6 +67,39 @@ public static class ExcelReaderFactory
         throw new HeaderException(Errors.ErrorHeaderSignature);
     }
 
+#if NET8_0_OR_GREATER
+    /// <summary>
+    /// Asynchronously creates an instance of <see cref="ExcelBinaryReader"/> or <see cref="ExcelOpenXmlReader"/>.
+    /// </summary>
+    /// <param name="fileStream">The file stream.</param>
+    /// <param name="configuration">The configuration object.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The excel data reader.</returns>
+    public static async Task<IExcelDataReader> CreateReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
+    {
+        configuration ??= new ExcelReaderConfiguration();
+
+        if (configuration.LeaveOpen)
+        {
+            fileStream = new LeaveOpenStream(fileStream);
+        }
+
+        var probe = new byte[8];
+        fileStream.Seek(0, SeekOrigin.Begin);
+        await fileStream.ReadAtLeastAsync(probe, 0, probe.Length, cancellationToken).ConfigureAwait(false);
+        fileStream.Seek(0, SeekOrigin.Begin);
+
+        if (probe[0] == 0x50 && probe[1] == 0x4B)
+        {
+            // zip files start with 'PK'
+            var document = await Core.OpenXmlFormat.ZipWorker.CreateAsync(fileStream, cancellationToken).ConfigureAwait(false);
+            return new ExcelOpenXmlReader(document);
+        }
+
+        throw new HeaderException(Errors.ErrorHeaderSignature);
+    }
+#endif
+
     /// <summary>
     /// Creates an instance of <see cref="ExcelBinaryReader"/>.
     /// </summary>
@@ -107,6 +140,18 @@ public static class ExcelReaderFactory
         {
             throw new HeaderException(Errors.ErrorHeaderSignature);
         }
+    }
+
+    /// <summary>
+    /// Asynchronously creates an instance of <see cref="ExcelBinaryReader"/>.
+    /// </summary>
+    /// <param name="fileStream">The file stream.</param>
+    /// <param name="configuration">The configuration object.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The excel data reader.</returns>
+    public static Task<IExcelDataReader> CreateBinaryReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
     }
 
     /// <summary>
@@ -151,6 +196,18 @@ public static class ExcelReaderFactory
     }
 
     /// <summary>
+    /// Asynchronously creates an instance of <see cref="ExcelOpenXmlReader"/>.
+    /// </summary>
+    /// <param name="fileStream">The file stream.</param>
+    /// <param name="configuration">The reader configuration -or- <see langword="null"/> to use the default configuration.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The excel data reader.</returns>
+    public static Task<IExcelDataReader> CreateOpenXmlReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
+    }
+
+    /// <summary>
     /// Creates an instance of ExcelCsvReader.
     /// </summary>
     /// <param name="fileStream">The file stream.</param>
@@ -166,6 +223,18 @@ public static class ExcelReaderFactory
         }
 
         return new ExcelCsvReader(fileStream, configuration.FallbackEncoding, configuration.AutodetectSeparators, configuration.AnalyzeInitialCsvRows, configuration.QuoteChar, configuration.TrimWhiteSpace);
+    }
+
+    /// <summary>
+    /// Asynchronously creates an instance of ExcelCsvReader.
+    /// </summary>
+    /// <param name="fileStream">The file stream.</param>
+    /// <param name="configuration">The reader configuration -or- <see langword="null"/> to use the default configuration.</param>
+    /// <param name="cancellationToken">A cancellation token.</param>
+    /// <returns>The excel data reader.</returns>
+    public static Task<IExcelDataReader> CreateCsvReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
+    {
+        throw new NotImplementedException();
     }
 
     private static bool TryGetWorkbook(Stream fileStream, CompoundDocument document, out Stream stream)

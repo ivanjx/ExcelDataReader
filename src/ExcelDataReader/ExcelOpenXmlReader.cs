@@ -13,6 +13,13 @@ internal sealed class ExcelOpenXmlReader : ExcelDataReader<XlsxWorkbook, XlsxWor
         Reset();
     }
 
+    public ExcelOpenXmlReader(ZipWorker document)
+    {
+        Document = document;
+        Workbook = new XlsxWorkbook(Document);
+        Reset();
+    }
+
     private ZipWorker Document { get; set; }
 
     public override void Close()
