@@ -16,8 +16,9 @@ internal sealed partial class ZipWorker : IDisposable
 
     private static readonly XmlReaderSettings XmlSettings = new() 
     {
-        IgnoreComments = true, 
+        IgnoreComments = true,
         IgnoreWhitespace = true,
+        Async = true
     };
 
     private readonly Dictionary<string, ZipArchiveEntry> _entries = new(StringComparer.OrdinalIgnoreCase);
