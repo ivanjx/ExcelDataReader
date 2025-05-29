@@ -38,13 +38,49 @@ internal sealed class XlsWorkbook : CommonWorkbook, IWorkbook<XlsWorksheet>
         }
     }
 
+    // Private constructor for async path
+    private XlsWorkbook(Stream stream)
+    {
+        Stream = stream;
+        Fonts = new List<XlsBiffFont>();
+        Sheets = new List<XlsBiffBoundSheet>();
+    }
+
+    internal static async Task<XlsWorkbook> CreateAsync(Stream stream, string password, Encoding fallbackEncoding, CancellationToken cancellationToken = default)
+    {
+        var workbook = new XlsWorkbook(stream);
+        using var biffStream = new XlsBiffStream(stream, password: password);
+        if (biffStream.BiffVersion == 0)
+            throw new ExcelReaderException(Errors.ErrorWorkbookGlobalsInvalidData);
+
+        workbook.BiffVersion = biffStream.BiffVersion;
+        workbook.SecretKey = biffStream.SecretKey;
+        workbook.Encryption = biffStream.Encryption;
+        workbook.Encoding = biffStream.BiffVersion == 8 ? Encoding.Unicode : fallbackEncoding;
+
+        if (biffStream.BiffType == BIFFTYPE.WorkbookGlobals)
+        {
+            await workbook.ReadWorkbookGlobalsAsync(biffStream, cancellationToken).ConfigureAwait(false);
+        }
+        else if (biffStream.BiffType == BIFFTYPE.Worksheet)
+        {
+            workbook.Sheets.Add(new XlsBiffBoundSheet(0, XlsBiffBoundSheet.SheetType.Worksheet, XlsBiffBoundSheet.SheetVisibility.Visible, "Sheet"));
+        }
+        else
+        {
+            throw new ExcelReaderException(Errors.ErrorWorkbookGlobalsInvalidData);
+        }
+
+        return workbook;
+    }
+
     public Stream Stream { get; }
 
-    public int BiffVersion { get; }
+    public int BiffVersion { get; private set; }
 
-    public byte[] SecretKey { get; }
+    public byte[] SecretKey { get; private set; }
 
-    public EncryptionInfo Encryption { get; }
+    public EncryptionInfo Encryption { get; private set; }
 
     public Encoding Encoding { get; private set; }
 
@@ -228,6 +264,77 @@ internal sealed class XlsWorkbook : CommonWorkbook, IWorkbook<XlsWorksheet>
         {
             // We don't decode the value until here in-case there are format records before the 
             // codepage record. 
+            Formats.Add(format.Key, new NumberFormatString(format.Value.GetValue(Encoding)));
+        }
+    }
+
+    private async Task ReadWorkbookGlobalsAsync(XlsBiffStream biffStream, CancellationToken cancellationToken)
+    {
+        Dictionary<int, XlsBiffFormatString> formats = new();
+        XlsBiffRecord rec;
+        while ((rec = await biffStream.ReadAsync(cancellationToken).ConfigureAwait(false)) is not null && rec is not XlsBiffEof)
+        {
+            switch (rec)
+            {
+                case XlsBiffInterfaceHdr hdr:
+                    InterfaceHdr = hdr;
+                    break;
+                case XlsBiffBoundSheet sheet:
+                    if (sheet.Type != XlsBiffBoundSheet.SheetType.Worksheet)
+                        break;
+                    Sheets.Add(sheet);
+                    break;
+                case XlsBiffSimpleValueRecord codePage when rec.Id == BIFFRECORDTYPE.CODEPAGE:
+                    CodePage = codePage;
+                    Encoding = EncodingHelper.GetEncoding(CodePage.Value);
+                    break;
+                case XlsBiffSimpleValueRecord is1904 when rec.Id == BIFFRECORDTYPE.RECORD1904:
+                    IsDate1904 = is1904.Value == 1;
+                    break;
+                case XlsBiffFont font:
+                    Fonts.Add(font);
+                    break;
+                case XlsBiffFormatString format23 when rec.Id == BIFFRECORDTYPE.FORMAT_V23:
+                    formats.Add((ushort)formats.Count, format23);
+                    break;
+                case XlsBiffFormatString fmt when rec.Id == BIFFRECORDTYPE.FORMAT:
+                    var index = fmt.Index;
+#if NETSTANDARD2_1_OR_GREATER || NET8_0_OR_GREATER
+                    formats.TryAdd(index, fmt);
+#else
+                    if (!formats.ContainsKey(index))
+                        formats.Add(index, fmt);
+#endif
+                    break;
+                case XlsBiffXF xf:
+                    AddXf(xf);
+                    break;
+                case XlsBiffSST sst:
+                    SST = sst;
+                    break;
+                case XlsBiffContinue sstContinue:
+                    SST?.ReadContinueStrings(sstContinue);
+                    break;
+                case { Id: BIFFRECORDTYPE.MMS } _:
+                    Mms = rec;
+                    break;
+                case { Id: BIFFRECORDTYPE.COUNTRY }:
+                    Country = rec;
+                    break;
+                case { Id: BIFFRECORDTYPE.EXTSST }:
+                    ExtSST = rec;
+                    break;
+                case { Id: BIFFRECORDTYPE.WINDOW1 }:
+                    ActiveSheet = rec.ReadInt16(10);
+                    break;
+                default:
+                    break;
+            }
+        }
+        
+        SST?.Flush();
+        foreach (var format in formats)
+        {
             Formats.Add(format.Key, new NumberFormatString(format.Value.GetValue(Encoding)));
         }
     }

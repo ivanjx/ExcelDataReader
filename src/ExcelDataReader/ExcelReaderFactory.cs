@@ -89,11 +89,34 @@ public static class ExcelReaderFactory
         await fileStream.ReadAtLeastAsync(probe, 0, probe.Length, cancellationToken).ConfigureAwait(false);
         fileStream.Seek(0, SeekOrigin.Begin);
 
+        if (CompoundDocument.IsCompoundDocument(probe))
+        {
+            // Can be BIFF5-8 or password protected OpenXml
+            var document = new CompoundDocument(fileStream);
+            if (TryGetWorkbook(fileStream, document, out var stream))
+            {
+                // Use async ExcelBinaryReader creation
+                return await ExcelBinaryReader.CreateAsync(stream, configuration.Password, configuration.FallbackEncoding, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (TryGetEncryptedPackage(fileStream, document, configuration.Password, out stream))
+            {
+                return new ExcelOpenXmlReader(stream);
+            }
+
+            throw new ExcelReaderException(Errors.ErrorStreamWorkbookNotFound);
+        }
+
         if (probe[0] == 0x50 && probe[1] == 0x4B)
         {
             // zip files start with 'PK'
             var document = await Core.OpenXmlFormat.ZipWorker.CreateAsync(fileStream, cancellationToken).ConfigureAwait(false);
             return new ExcelOpenXmlReader(document);
+        }
+
+        if (XlsWorkbook.IsRawBiffStream(probe))
+        {
+            return await ExcelBinaryReader.CreateAsync(fileStream, configuration.Password, configuration.FallbackEncoding, cancellationToken).ConfigureAwait(false);
         }
 
         throw new HeaderException(Errors.ErrorHeaderSignature);

@@ -37,12 +37,24 @@ public class ExcelReaderFactoryTests
         await using var stream = Configuration.GetTestWorkbook(name);
         var reader = await ExcelReaderFactory.CreateReaderAsync(
             stream,
-            new ExcelReaderConfiguration()
-            {
-                
-            },
+            null,
             default);
         Assert.That(reader.GetType().Name, Is.EqualTo("ExcelOpenXmlReader"));
+    }
+
+    [TestCase("Test10x10.xls")]
+    [TestCase("TestUnicodeChars.xls")]
+    [TestCase("biff3.xls")]
+    [TestCase("as3xls_BIFF2.xls")]
+    [Test]
+    public async Task ProbeXlsAsync(string name)
+    {
+        await using var stream = Configuration.GetTestWorkbook(name);
+        var reader = await ExcelReaderFactory.CreateReaderAsync(
+            stream,
+            null,
+            default);
+        Assert.That(reader.GetType().Name, Is.EqualTo("ExcelBinaryReader"));
     }
 #endif
 }

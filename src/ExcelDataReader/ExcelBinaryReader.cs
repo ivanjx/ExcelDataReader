@@ -13,6 +13,20 @@ internal sealed class ExcelBinaryReader : ExcelDataReader<XlsWorkbook, XlsWorksh
         Reset();
     }
 
+    // New constructor for internal use
+    internal ExcelBinaryReader(XlsWorkbook workbook)
+    {
+        Workbook = workbook;
+        Reset();
+    }
+
+    public static async Task<ExcelBinaryReader> CreateAsync(Stream stream, string password, Encoding fallbackEncoding, CancellationToken cancellationToken = default)
+    {
+        var workbook = await XlsWorkbook.CreateAsync(stream, password, fallbackEncoding, cancellationToken).ConfigureAwait(false);
+        var reader = new ExcelBinaryReader(workbook);
+        return reader;
+    }
+
     public override void Close()
     {
         base.Close();

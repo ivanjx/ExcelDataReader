@@ -139,6 +139,22 @@ internal sealed class XlsBiffStream : IDisposable
         return record;
     }
 
+    public async Task<XlsBiffRecord> ReadAsync(CancellationToken cancellationToken = default)
+    {
+        // Minimum record size is 4
+        if ((uint)Position + 4 >= Size)
+            return null;
+
+        var record = await GetRecordAsync(BaseStream, cancellationToken).ConfigureAwait(false);
+
+        if (Position > Size)
+        {
+            record = null;
+        }
+
+        return record;
+    }
+
     /// <summary>
     /// Returns record at specified offset.
     /// </summary>
@@ -188,6 +204,131 @@ internal sealed class XlsBiffStream : IDisposable
             case BIFFRECORDTYPE.ROW:
                 return new XlsBiffRow(bytes);
 
+            case BIFFRECORDTYPE.BOOLERR:
+            case BIFFRECORDTYPE.BOOLERR_OLD:
+            case BIFFRECORDTYPE.BLANK:
+            case BIFFRECORDTYPE.BLANK_OLD:
+                return new XlsBiffBlankCell(bytes);
+            case BIFFRECORDTYPE.MULBLANK:
+                return new XlsBiffMulBlankCell(bytes);
+            case BIFFRECORDTYPE.LABEL_OLD:
+            case BIFFRECORDTYPE.LABEL:
+            case BIFFRECORDTYPE.RSTRING:
+                return new XlsBiffLabelCell(bytes, biffVersion);
+            case BIFFRECORDTYPE.LABELSST:
+                return new XlsBiffLabelSSTCell(bytes);
+            case BIFFRECORDTYPE.INTEGER:
+            case BIFFRECORDTYPE.INTEGER_OLD:
+                return new XlsBiffIntegerCell(bytes);
+            case BIFFRECORDTYPE.NUMBER:
+            case BIFFRECORDTYPE.NUMBER_OLD:
+                return new XlsBiffNumberCell(bytes);
+            case BIFFRECORDTYPE.RK:
+                return new XlsBiffRKCell(bytes);
+            case BIFFRECORDTYPE.MULRK:
+                return new XlsBiffMulRKCell(bytes);
+            case BIFFRECORDTYPE.FORMULA:
+            case BIFFRECORDTYPE.FORMULA_V3:
+            case BIFFRECORDTYPE.FORMULA_V4:
+                return new XlsBiffFormulaCell(bytes, biffVersion);
+            case BIFFRECORDTYPE.FORMAT_V23:
+            case BIFFRECORDTYPE.FORMAT:
+                return new XlsBiffFormatString(bytes, biffVersion);
+            case BIFFRECORDTYPE.STRING:
+            case BIFFRECORDTYPE.STRING_OLD:
+                return new XlsBiffFormulaString(bytes, biffVersion);
+            case BIFFRECORDTYPE.CONTINUE:
+                return new XlsBiffContinue(bytes);
+            case BIFFRECORDTYPE.DIMENSIONS:
+            case BIFFRECORDTYPE.DIMENSIONS_V2 when bytes.Length >= 12:
+                return new XlsBiffDimensions(bytes, biffVersion);
+            case BIFFRECORDTYPE.BOUNDSHEET:
+                return new XlsBiffBoundSheet(bytes, biffVersion);
+            case BIFFRECORDTYPE.WINDOW1:
+                return new XlsBiffWindow1(bytes);
+            case BIFFRECORDTYPE.CODEPAGE:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.FNGROUPCOUNT:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.RECORD1904:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.BOOKBOOL:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.BACKUP:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.HIDEOBJ:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.USESELFS:
+                return new XlsBiffSimpleValueRecord(bytes);
+            case BIFFRECORDTYPE.UNCALCED:
+                return new XlsBiffUncalced(bytes);
+            case BIFFRECORDTYPE.QUICKTIP:
+                return new XlsBiffQuickTip(bytes);
+            case BIFFRECORDTYPE.MSODRAWING:
+                return new XlsBiffMSODrawing(bytes);
+            case BIFFRECORDTYPE.FILEPASS:
+                return new XlsBiffFilePass(bytes, biffVersion);
+            case BIFFRECORDTYPE.HEADER:
+            case BIFFRECORDTYPE.FOOTER:
+                return new XlsBiffHeaderFooterString(bytes, biffVersion);
+            case BIFFRECORDTYPE.CODENAME:
+                return new XlsBiffCodeName(bytes);
+            case BIFFRECORDTYPE.XF:
+            case BIFFRECORDTYPE.XF_V2:
+            case BIFFRECORDTYPE.XF_V3:
+            case BIFFRECORDTYPE.XF_V4:
+                return new XlsBiffXF(bytes, biffVersion);
+            case BIFFRECORDTYPE.FONT:
+                return new XlsBiffFont(bytes, biffVersion);
+            case BIFFRECORDTYPE.MERGECELLS:
+                return new XlsBiffMergeCells(bytes);
+            case BIFFRECORDTYPE.COLINFO:
+                return new XlsBiffColInfo(bytes);
+            default:
+                return new XlsBiffRecord(bytes);
+        }
+    }
+
+    public async Task<XlsBiffRecord> GetRecordAsync(Stream stream, CancellationToken cancellationToken = default)
+    {
+        var recordOffset = (int)stream.Position;
+        await stream.ReadAtLeastAsync(_headerBuffer, 0, 4, cancellationToken).ConfigureAwait(false);
+
+        var id = (BIFFRECORDTYPE)BitConverter.ToUInt16(_headerBuffer, 0);
+        ushort recordSize = BitConverter.ToUInt16(_headerBuffer, 2);
+
+#if NETSTANDARD2_1_OR_GREATER || NET8_0_OR_GREATER
+        var bytes = System.Buffers.ArrayPool<byte>.Shared.Rent(4 + recordSize);
+#else
+        var bytes = new byte[4 + recordSize];
+#endif
+        Array.Copy(_headerBuffer, bytes, 4);
+        await stream.ReadAtLeastAsync(bytes, 4, recordSize, cancellationToken).ConfigureAwait(false);
+        
+        if (SecretKey != null)
+            DecryptRecord(recordOffset, id, bytes, 4 + recordSize);
+
+        int biffVersion = BiffVersion;
+
+        switch (id)
+        {
+            case BIFFRECORDTYPE.BOF_V2:
+            case BIFFRECORDTYPE.BOF_V3:
+            case BIFFRECORDTYPE.BOF_V4:
+            case BIFFRECORDTYPE.BOF:
+                return new XlsBiffBOF(bytes);
+            case BIFFRECORDTYPE.EOF:
+                return new XlsBiffEof(bytes);
+            case BIFFRECORDTYPE.INTERFACEHDR:
+                return new XlsBiffInterfaceHdr(bytes);
+            case BIFFRECORDTYPE.SST:
+                return new XlsBiffSST(bytes);
+            case BIFFRECORDTYPE.DEFAULTROWHEIGHT_V2:
+            case BIFFRECORDTYPE.DEFAULTROWHEIGHT:
+                return new XlsBiffDefaultRowHeight(bytes, biffVersion);
+            case BIFFRECORDTYPE.ROW_V2:
+            case BIFFRECORDTYPE.ROW:
+                return new XlsBiffRow(bytes);
             case BIFFRECORDTYPE.BOOLERR:
             case BIFFRECORDTYPE.BOOLERR_OLD:
             case BIFFRECORDTYPE.BLANK:
