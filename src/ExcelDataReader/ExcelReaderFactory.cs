@@ -169,18 +169,6 @@ public static class ExcelReaderFactory
     }
 
     /// <summary>
-    /// Asynchronously creates an instance of <see cref="ExcelBinaryReader"/>.
-    /// </summary>
-    /// <param name="fileStream">The file stream.</param>
-    /// <param name="configuration">The configuration object.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>The excel data reader.</returns>
-    public static Task<IExcelDataReader> CreateBinaryReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException();
-    }
-
-    /// <summary>
     /// Creates an instance of <see cref="ExcelOpenXmlReader"/>.
     /// </summary>
     /// <param name="fileStream">The file stream.</param>
@@ -222,18 +210,6 @@ public static class ExcelReaderFactory
     }
 
     /// <summary>
-    /// Asynchronously creates an instance of <see cref="ExcelOpenXmlReader"/>.
-    /// </summary>
-    /// <param name="fileStream">The file stream.</param>
-    /// <param name="configuration">The reader configuration -or- <see langword="null"/> to use the default configuration.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>The excel data reader.</returns>
-    public static Task<IExcelDataReader> CreateOpenXmlReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException();
-    }
-
-    /// <summary>
     /// Creates an instance of ExcelCsvReader.
     /// </summary>
     /// <param name="fileStream">The file stream.</param>
@@ -249,18 +225,6 @@ public static class ExcelReaderFactory
         }
 
         return new ExcelCsvReader(fileStream, configuration.FallbackEncoding, configuration.AutodetectSeparators, configuration.AnalyzeInitialCsvRows, configuration.QuoteChar, configuration.TrimWhiteSpace);
-    }
-
-    /// <summary>
-    /// Asynchronously creates an instance of ExcelCsvReader.
-    /// </summary>
-    /// <param name="fileStream">The file stream.</param>
-    /// <param name="configuration">The reader configuration -or- <see langword="null"/> to use the default configuration.</param>
-    /// <param name="cancellationToken">A cancellation token.</param>
-    /// <returns>The excel data reader.</returns>
-    public static Task<IExcelDataReader> CreateCsvReaderAsync(Stream fileStream, ExcelReaderConfiguration configuration = null, CancellationToken cancellationToken = default)
-    {
-        throw new NotImplementedException();
     }
 
     private static bool TryGetWorkbook(Stream fileStream, CompoundDocument document, out Stream stream)
