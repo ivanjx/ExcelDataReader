@@ -92,17 +92,18 @@ public static class ExcelReaderFactory
         if (CompoundDocument.IsCompoundDocument(probe))
         {
             // Can be BIFF5-8 or password protected OpenXml
-            var document = new CompoundDocument(fileStream);
-            if (TryGetWorkbook(fileStream, document, out var stream))
+            var document = await CompoundDocument.CreateAsync(fileStream, cancellationToken).ConfigureAwait(false);
+            if (TryGetWorkbook(fileStream, document, out var workbookStream))
             {
                 // Use async ExcelBinaryReader creation
-                return await ExcelBinaryReader.CreateAsync(stream, configuration.Password, configuration.FallbackEncoding, cancellationToken).ConfigureAwait(false);
+                return await ExcelBinaryReader.CreateAsync(workbookStream, configuration.Password, configuration.FallbackEncoding, cancellationToken).ConfigureAwait(false);
             }
 
-            if (TryGetEncryptedPackage(fileStream, document, configuration.Password, out stream))
+            var (foundEncrypted, encryptedStream) = await TryGetEncryptedPackageAsync(fileStream, document, configuration.Password, cancellationToken).ConfigureAwait(false);
+            if (foundEncrypted)
             {
                 // The stream is a decrypted ZIP package, so use ZipWorker async
-                var zipWorker = await Core.OpenXmlFormat.ZipWorker.CreateAsync(stream, cancellationToken).ConfigureAwait(false);
+                var zipWorker = await Core.OpenXmlFormat.ZipWorker.CreateAsync(encryptedStream, cancellationToken).ConfigureAwait(false);
                 return new ExcelOpenXmlReader(zipWorker);
             }
 
@@ -310,4 +311,32 @@ public static class ExcelReaderFactory
         stream = encryption.CreateEncryptedPackageStream(packageStream, secretKey);
         return true;
     }
+
+#if NET8_0_OR_GREATER
+    private static async Task<(bool Found, Stream Stream)> TryGetEncryptedPackageAsync(Stream fileStream, CompoundDocument document, string password, CancellationToken cancellationToken = default)
+    {
+        var encryptedPackage = document.FindEntry(DirectoryEntryEncryptedPackage);
+        var encryptionInfo = document.FindEntry(DirectoryEntryEncryptionInfo);
+        if (encryptedPackage == null || encryptionInfo == null)
+        {
+            return (false, null);
+        }
+
+        var infoBytes = await document.ReadStreamAsync(fileStream, encryptionInfo.StreamFirstSector, (int)encryptionInfo.StreamSize, encryptionInfo.IsEntryMiniStream, cancellationToken).ConfigureAwait(false);
+        var encryption = EncryptionInfo.Create(infoBytes);
+        if (encryption.VerifyPassword("VelvetSweatshop"))
+        {
+            password = "VelvetSweatshop";
+        }
+        else if (password == null || !encryption.VerifyPassword(password))
+        {
+            throw new InvalidPasswordException(Errors.ErrorInvalidPassword);
+        }
+
+        var secretKey = encryption.GenerateSecretKey(password);
+        var packageStream = new CompoundStream(document, fileStream, encryptedPackage.StreamFirstSector, (int)encryptedPackage.StreamSize, encryptedPackage.IsEntryMiniStream, false);
+        var encryptedStream = encryption.CreateEncryptedPackageStream(packageStream, secretKey);
+        return (true, encryptedStream);
+    }
+#endif
 }

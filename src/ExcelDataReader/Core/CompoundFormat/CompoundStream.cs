@@ -90,6 +90,28 @@ internal sealed class CompoundStream : Stream
         return index;
     }
 
+#if NET8_0_OR_GREATER
+    public async Task<int> ReadAtLeastAsync(byte[] buffer, int offset, int minimumBytes, CancellationToken cancellationToken = default)
+    {
+        int totalRead = 0;
+        while (totalRead < minimumBytes && Position < Length)
+        {
+            if (SectorOffset == SectorBytes.Length)
+            {
+                await ReadSectorAsync(cancellationToken).ConfigureAwait(false);
+                SectorOffset = 0;
+            }
+
+            var chunkSize = Math.Min(minimumBytes - totalRead, SectorBytes.Length - SectorOffset);
+            Array.Copy(SectorBytes, SectorOffset, buffer, offset + totalRead, chunkSize);
+            totalRead += chunkSize;
+            SectorOffset += chunkSize;
+        }
+
+        return totalRead;
+    }
+#endif
+
     public override long Seek(long offset, SeekOrigin origin)
     {
         var sectorSize = IsMini ? Document.Header.MiniSectorSize : Document.Header.SectorSize;
@@ -144,6 +166,20 @@ internal sealed class CompoundStream : Stream
         }
     }
 
+#if NET8_0_OR_GREATER
+    private async Task ReadSectorAsync(CancellationToken cancellationToken)
+    {
+        if (IsMini)
+        {
+            await ReadMiniSectorAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await ReadRegularSectorAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+#endif
+
     private void ReadMiniSector()
     {
         var sector = SectorChain[SectorChainOffset];
@@ -171,6 +207,32 @@ internal sealed class CompoundStream : Stream
         SectorChainOffset++;
     }
 
+#if NET8_0_OR_GREATER
+    private async Task ReadMiniSectorAsync(CancellationToken cancellationToken)
+    {
+        var sector = SectorChain[SectorChainOffset];
+        var miniStreamOffset = (int)Document.GetMiniSectorOffset(sector);
+        var rootSectorIndex = miniStreamOffset / Document.Header.SectorSize;
+        if (rootSectorIndex >= RootSectorChain.Count)
+        {
+            throw new CompoundDocumentException(Errors.ErrorEndOfFile);
+        }
+
+        var rootSector = RootSectorChain[rootSectorIndex];
+        var rootOffset = miniStreamOffset % Document.Header.SectorSize;
+        BaseStream.Seek(Document.GetSectorOffset(rootSector) + rootOffset, SeekOrigin.Begin);
+        var chunkSize = (int)Math.Min(Length - Offset, Document.Header.MiniSectorSize);
+        SectorBytes = new byte[chunkSize];
+        if (await BaseStream.ReadAtLeastAsync(SectorBytes, 0, chunkSize, cancellationToken).ConfigureAwait(false) < chunkSize)
+        {
+            throw new CompoundDocumentException(Errors.ErrorEndOfFile);
+        }
+
+        Offset += chunkSize;
+        SectorChainOffset++;
+    }
+#endif
+
     private void ReadRegularSector()
     {
         var sector = SectorChain[SectorChainOffset];
@@ -186,4 +248,21 @@ internal sealed class CompoundStream : Stream
         Offset += chunkSize;
         SectorChainOffset++;
     }
+
+#if NET8_0_OR_GREATER
+    private async Task ReadRegularSectorAsync(CancellationToken cancellationToken)
+    {
+        var sector = SectorChain[SectorChainOffset];
+        BaseStream.Seek(Document.GetSectorOffset(sector), SeekOrigin.Begin);
+        var chunkSize = (int)Math.Min(Length - Offset, Document.Header.SectorSize);
+        SectorBytes = new byte[chunkSize];
+        if (await BaseStream.ReadAtLeastAsync(SectorBytes, 0, chunkSize, cancellationToken).ConfigureAwait(false) < chunkSize)
+        {
+            throw new CompoundDocumentException(Errors.ErrorEndOfFile);
+        }
+
+        Offset += chunkSize;
+        SectorChainOffset++;
+    }
+#endif
 }

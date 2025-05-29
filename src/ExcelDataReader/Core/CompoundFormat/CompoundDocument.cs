@@ -27,11 +27,40 @@ internal sealed class CompoundDocument
         ReadDirectoryEntries(bytes);
     }
 
-    internal CompoundHeader Header { get; }
+#if NET8_0_OR_GREATER
+    private CompoundDocument() { }
 
-    internal List<uint> SectorTable { get; }
+    public static async Task<CompoundDocument> CreateAsync(Stream stream, CancellationToken cancellationToken = default)
+    {
+        var reader = new BinaryReader(stream);
+        var doc = new CompoundDocument();
 
-    internal List<uint> MiniSectorTable { get; }
+        doc.Header = ReadHeader(reader);
+
+        if (!doc.Header.IsSignatureValid)
+            throw new HeaderException(Errors.ErrorHeaderSignature);
+        if (doc.Header.ByteOrder != 0xFFFE && doc.Header.ByteOrder != 0xFFFF)
+            throw new HeaderException(Errors.ErrorHeaderOrder);
+
+        var difSectorChain = doc.ReadDifSectorChain(reader);
+        doc.SectorTable = doc.ReadSectorTable(reader, difSectorChain);
+
+        var miniChain = GetSectorChain(doc.Header.MiniFatFirstSector, doc.SectorTable);
+        doc.MiniSectorTable = doc.ReadSectorTable(reader, miniChain);
+
+        var directoryChain = GetSectorChain(doc.Header.RootDirectoryEntryStart, doc.SectorTable);
+        var bytes = await doc.ReadStreamAsync(stream, directoryChain, directoryChain.Count * doc.Header.SectorSize, cancellationToken).ConfigureAwait(false);
+        doc.ReadDirectoryEntries(bytes);
+
+        return doc;
+    }
+#endif
+
+    internal CompoundHeader Header { get; private set; }
+
+    internal List<uint> SectorTable { get; private set; }
+
+    internal List<uint> MiniSectorTable { get; private set; }
 
     internal CompoundDirectoryEntry RootEntry { get; set; }
 
@@ -103,6 +132,25 @@ internal sealed class CompoundDocument
         using var cfb = new CompoundStream(this, stream, sectors, length, true);
         var bytes = new byte[length];
         cfb.ReadAtLeast(bytes, 0, length);
+        return bytes;
+    }
+
+    /// <summary>
+    /// Asynchronously reads bytes from a regular or mini stream.
+    /// </summary>
+    internal async Task<byte[]> ReadStreamAsync(Stream stream, uint baseSector, int length, bool isMini, CancellationToken cancellationToken = default)
+    {
+        using var cfb = new CompoundStream(this, stream, baseSector, length, isMini, true);
+        var bytes = new byte[length];
+        await cfb.ReadAtLeastAsync(bytes, 0, length, cancellationToken).ConfigureAwait(false);
+        return bytes;
+    }
+
+    internal async Task<byte[]> ReadStreamAsync(Stream stream, List<uint> sectors, int length, CancellationToken cancellationToken = default)
+    {
+        using var cfb = new CompoundStream(this, stream, sectors, length, true);
+        var bytes = new byte[length];
+        await cfb.ReadAtLeastAsync(bytes, 0, length, cancellationToken).ConfigureAwait(false);
         return bytes;
     }
 
