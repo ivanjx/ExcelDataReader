@@ -101,7 +101,9 @@ public static class ExcelReaderFactory
 
             if (TryGetEncryptedPackage(fileStream, document, configuration.Password, out stream))
             {
-                return new ExcelOpenXmlReader(stream);
+                // The stream is a decrypted ZIP package, so use ZipWorker async
+                var zipWorker = await Core.OpenXmlFormat.ZipWorker.CreateAsync(stream, cancellationToken).ConfigureAwait(false);
+                return new ExcelOpenXmlReader(zipWorker);
             }
 
             throw new ExcelReaderException(Errors.ErrorStreamWorkbookNotFound);

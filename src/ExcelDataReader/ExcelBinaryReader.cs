@@ -13,7 +13,7 @@ internal sealed class ExcelBinaryReader : ExcelDataReader<XlsWorkbook, XlsWorksh
         Reset();
     }
 
-    // New constructor for internal use
+#if NET8_0_OR_GREATER
     internal ExcelBinaryReader(XlsWorkbook workbook)
     {
         Workbook = workbook;
@@ -26,6 +26,7 @@ internal sealed class ExcelBinaryReader : ExcelDataReader<XlsWorkbook, XlsWorksh
         var reader = new ExcelBinaryReader(workbook);
         return reader;
     }
+#endif
 
     public override void Close()
     {

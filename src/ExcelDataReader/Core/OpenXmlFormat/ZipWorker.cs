@@ -91,7 +91,7 @@ internal sealed partial class ZipWorker : IDisposable
     }
 
 #if NET8_0_OR_GREATER
-    public ZipWorker(ZipArchive zipFile)
+    internal ZipWorker(ZipArchive zipFile)
     {
         _zipFile = zipFile;
         foreach (var entry in _zipFile.Entries)
